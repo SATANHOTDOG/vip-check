@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HOLA 專屬報價單</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; background: #f4f6f8; color: #2c3e50; min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px; }
+        .card { background: #ffffff; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); width: 100%; max-width: 450px; overflow: hidden; position: relative; display: none; }
+        .card-header { background: linear-gradient(135deg, #1a2a6c, #b21f1f, #fdbb2d); padding: 30px 20px; text-align: center; color: white; }
+        .card-header h1 { font-size: 1.4rem; letter-spacing: 2px; margin-bottom: 5px; }
+        .card-header p { font-size: 0.9rem; opacity: 0.8; }
+        .card-body { padding: 30px 25px; text-align: center; }
+        .sku { font-size: 0.85rem; color: #7f8c8d; font-family: monospace; margin-bottom: 10px; }
+        .name { font-size: 1.4rem; font-weight: 900; margin-bottom: 25px; line-height: 1.4; color: #2c3e50; }
+        .price-box { background: #f8f9fa; border: 2px dashed #bdc3c7; border-radius: 12px; padding: 20px; margin-bottom: 25px; }
+        .price-title { font-size: 0.9rem; color: #7f8c8d; font-weight: bold; margin-bottom: 5px; }
+        .price-value { font-size: 2.2rem; font-weight: 900; color: #e74c3c; }
+        .orig-price { text-decoration: line-through; color: #95a5a6; font-size: 1rem; margin-top: 5px; }
+        .period-tag { display: inline-block; background: #eef2f7; color: #c0392b; font-weight: bold; font-size: 0.85rem; padding: 6px 12px; border-radius: 6px; margin-bottom: 20px; }
+        .footer-note { font-size: 0.75rem; color: #95a5a6; text-align: justify; line-height: 1.5; border-top: 1px solid #ecf0f1; padding-top: 20px; }
+        
+        .loading { font-size: 1.2rem; font-weight: bold; color: #7f8c8d; text-align: center; }
+        .error-card { background: #fff; padding: 40px 20px; text-align: center; border-radius: 20px; max-width: 400px; width: 100%; box-shadow: 0 10px 30px rgba(0,0,0,0.1); display: none; }
+        .error-icon { font-size: 4rem; margin-bottom: 15px; }
+        .error-title { font-size: 1.5rem; color: #c0392b; font-weight: 900; margin-bottom: 10px; }
+        .error-text { color: #7f8c8d; font-size: 0.95rem; line-height: 1.6; }
+    </style>
+</head>
+<body>
+
+    <div id="loading" class="loading">正在為您開啟專屬檔案...</div>
+
+    <!-- 正常顯示報價的卡片 -->
+    <div id="successCard" class="card">
+        <div class="card-header">
+            <h1>HOLA EXCLUSIVE</h1>
+            <p>您的專屬家具提案</p>
+        </div>
+        <div class="card-body">
+            <div class="sku" id="displaySku">SKU: 載入中</div>
+            <div class="name" id="displayName">載入中...</div>
+            <div class="price-box">
+                <div class="price-title">專屬優惠價</div>
+                <div class="price-value" id="displayPrice">$0</div>
+                <div class="orig-price" id="displayOrigPrice"></div>
+            </div>
+            <div class="period-tag" id="displayPeriod" style="display:none;"></div>
+            <div class="footer-note">
+                此報價單由您的專屬家具顧問提供，連結內含安全保護機制，超過 60 天將自動失效。<br><br>
+                ※ 結帳價格以門市當下檔期活動與系統定價為準，建議您若需保留商品，請儘速與顧問聯繫。
+            </div>
+        </div>
+    </div>
+
+    <!-- 過期或無效的卡片 -->
+    <div id="errorCard" class="error-card">
+        <div class="error-icon">🥀</div>
+        <div class="error-title" id="errorTitle">連結已失效</div>
+        <div class="error-text" id="errorText">此專屬報價連結已超過 60 天安全效期。<br>為了提供您最準確的資訊，請重新與您的家具顧問聯繫。</div>
+    </div>
+
+    <script>
+        // 主資料庫 (與你的版本 A 相同)
+        const GOOGLE_SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTC18jsseZH3TerLqZMzzkJc1uPjh2IVTktcs4DxiuEmpA_NRAnzKrgzZbV43FQtN8b7-vMlvv1BFGF/pub?gid=0&single=true&output=csv';
+
+        function showError(title, text) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('errorCard').style.display = 'block';
+            document.getElementById('errorTitle').innerText = title;
+            document.getElementById('errorText').innerHTML = text;
+        }
+
+        async function init() {
+            const params = new URLSearchParams(window.location.search);
+            const code = params.get('c');
+            
+            if (!code) {
+                return showError("無效的檔案", "查無專屬報價紀錄。");
+            }
+
+            let decoded;
+            try {
+                // 解碼 Base64
+                decoded = decodeURIComponent(atob(code));
+            } catch (e) {
+                return showError("解碼失敗", "這不是有效的報價連結。");
+            }
+
+            const parts = decoded.split('|');
+            if (parts.length !== 2) {
+                return showError("資料損毀", "檔案格式不正確。");
+            }
+
+            const sku = parts[0];
+            const dateStr = parts[1]; // YYYYMMDD
+            
+            // 驗證過期機制 (60天)
+            if(dateStr.length === 8) {
+                const y = parseInt(dateStr.substring(0,4));
+                const m = parseInt(dateStr.substring(4,6)) - 1;
+                const d = parseInt(dateStr.substring(6,8));
+                const generateDate = new Date(y, m, d);
+                const now = new Date();
+                const diffTime = Math.abs(now - generateDate);
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+                
+                if (diffDays > 60) {
+                    return showError("連結已失效", "此專屬報價連結已超過 60 天安全效期。<br>為提供最準確資訊，請重新聯繫顧問。");
+                }
+            }
+
+            // 抓取試算表資料
+            try {
+                const response = await fetch(GOOGLE_SHEET_CSV_URL);
+                const csvText = await response.text();
+                const lines = csvText.split(/\r?\n/);
+                let headers = [];
+                let foundProduct = null;
+
+                for (let i = 0; i < lines.length; i++) {
+                    if (i === 0) {
+                        headers = parseCSVLine(lines[i]);
+                        continue;
+                    }
+                    if (!lines[i].trim()) continue;
+                    const values = parseCSVLine(lines[i]);
+                    const rowSku = values[headers.findIndex(h => h.trim() === 'SKU')] || '';
+                    if (rowSku.trim() === sku) {
+                        foundProduct = {};
+                        headers.forEach((h, index) => {
+                            foundProduct[h.trim()] = values[index] ? values[index].trim() : '';
+                        });
+                        break;
+                    }
+                }
+
+                if (!foundProduct) {
+                    return showError("商品已下架", "我們在目前的資料庫中找不到這件商品了。");
+                }
+
+                renderProduct(foundProduct);
+
+            } catch (error) {
+                showError("連線異常", "無法與伺服器取得連線，請稍後再試。");
+            }
+        }
+
+        function renderProduct(p) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('successCard').style.display = 'block';
+
+            const name = p['商品名稱'] || '無品名';
+            const origPrice = p['一般售價'] || '0';
+            const promoPriceRaw = p['促銷售價'];
+            const promoPeriodRaw = p['促銷期間'];
+
+            document.getElementById('displaySku').innerText = `SKU: ${p['SKU']}`;
+            document.getElementById('displayName').innerText = name;
+
+            const activePromo = getActiveShortestPromo(
+                promoPriceRaw !== '#N/A' && promoPriceRaw !== '0' ? promoPriceRaw : '', 
+                promoPeriodRaw !== '#N/A' ? promoPeriodRaw : ''
+            );
+
+            if (activePromo.price) {
+                document.getElementById('displayPrice').innerText = `$${activePromo.price}`;
+                document.getElementById('displayOrigPrice').innerText = `原價 $${origPrice}`;
+                const periodDisplay = document.getElementById('displayPeriod');
+                periodDisplay.style.display = 'inline-block';
+                periodDisplay.innerText = `⏱️ 檔期至 ${activePromo.period.split('~')[1] || activePromo.period}`;
+            } else {
+                document.getElementById('displayPrice').innerText = `$${origPrice}`;
+                document.getElementById('displayOrigPrice').style.display = 'none';
+            }
+        }
+
+        // CSV 工具函數 (防禦逗號)
+        function parseCSVLine(line) {
+            let values = []; let current = ''; let inQuotes = false;
+            for (let i = 0; i < line.length; i++) {
+                let char = line[i];
+                if (char === '"' || char === "'") inQuotes = !inQuotes;
+                else if (char === ',' && !inQuotes) { values.push(current); current = ''; }
+                else current += char;
+            }
+            values.push(current);
+            return values.map(v => v.replace(/^["']|["']$/g, ''));
+        }
+
+        // 日期比對工具
+        function getActiveShortestPromo(promoPriceStr, promoPeriodStr) {
+            const targetDateObj = new Date();
+            if (!promoPriceStr || !promoPeriodStr) return { price: '', period: '' };
+            const prices = promoPriceStr.split('|').map(s => s.trim());
+            const periods = promoPeriodStr.split('|').map(s => s.trim());
+            let bestPromo = null; let minDuration = Infinity;
+            for (let i = 0; i < periods.length; i++) {
+                const parts = periods[i].split('~');
+                const priceMatch = prices[i] !== undefined ? prices[i] : prices[0];
+                if (parts.length === 2) {
+                    const start = new Date(parts[0].trim().replace(/-/g, '/') + " 00:00:00");
+                    const end = new Date(parts[1].trim().replace(/-/g, '/') + " 23:59:59");
+                    if (targetDateObj >= start && targetDateObj <= end) {
+                        const duration = end - start;
+                        if (duration < minDuration) { minDuration = duration; bestPromo = { price: priceMatch, period: periods[i] }; }
+                    }
+                } else {
+                    if (Infinity <= minDuration) bestPromo = { price: priceMatch, period: periods[i] };
+                }
+            }
+            return bestPromo || { price: '', period: '' };
+        }
+
+        // 網頁載入時啟動
+        window.onload = init;
+    </script>
+</body>
+</html>
